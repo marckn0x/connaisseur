@@ -28,34 +28,61 @@ class CosignValidator(ValidatorInterface):
 
     def __get_key(self, key_name: str = None):
         key_name = key_name or "default"
-        try:
-            key = next(
-                key["key"] for key in self.trust_roots if key["name"] == key_name
-            )
-        except StopIteration as err:
-            msg = 'Trust root "{key_name}" not configured for validator "{validator_name}".'
-            raise NotFoundException(
-                message=msg, key_name=key_name, validator_name=self.name
-            ) from err
-        return Key("".join(key))
+
+        if key_name == "*":
+            keys = {
+                k["name"]: {"name": k["name"], "key": Key("".join(k["key"]))}
+                for k in self.trust_roots
+            }
+        else:
+            try:
+                key = next(k["key"] for k in self.trust_roots if k["name"] == key_name)
+            except StopIteration as err:
+                msg = 'Trust root "{key_name}" not configured for validator "{validator_name}".'
+                raise NotFoundException(
+                    message=msg, key_name=key_name, validator_name=self.name
+                ) from err
+            keys = {key_name: {"name": key_name, "key": Key("".join(key))}}
+        return keys
 
     async def validate(
         self, image: Image, trust_root: str = None, **kwargs
     ):  # pylint: disable=arguments-differ
-        key = self.__get_key(trust_root)
-        return self.__get_cosign_validated_digests(image, key).pop()
+        roots = self.__get_key(trust_root)
 
-    def __get_cosign_validated_digests(self, image: Image, key: Key):
+        threshold = kwargs.get(
+            "threshold", len(self.trust_roots) if trust_root == "*" else 1
+        )
+        required = kwargs.get("required", [])
+
+        for name, root in roots.items():
+            try:
+                roots[name]["digests"] = self.__get_cosign_validated_digests(
+                    image, root
+                ).pop()
+            except Exception as err:
+                roots[name]["digests"] = None
+                roots[name]["error"] = err
+                logging.info(err)
+
+        return CosignValidator.__apply_policy(
+            roots=roots, threshold=threshold, required=required
+        )
+
+    def __get_cosign_validated_digests(self, image: Image, trust_root: dict):
         """
         Get and process Cosign validation output for a given `image` and `key`
         and either return a list of valid digests or raise a suitable exception
         in case no valid signature is found or Cosign fails.
         """
+        key = trust_root["key"]
+
         returncode, stdout, stderr = key.verify(
             validator_type="cosign", cosign_callback=self.__cosign_callback, image=image
         )
         logging.info(
-            "COSIGN output for image: %s; RETURNCODE: %s; STDOUT: %s; STDERR: %s",
+            "COSIGN output of trust root '%s' for image'%s': RETURNCODE: %s; STDOUT: %s; STDERR: %s",
+            trust_root["name"],
             image,
             returncode,
             stdout,
@@ -79,7 +106,13 @@ class CosignValidator(ValidatorInterface):
                             "received by Cosign: {err_type}: {err}"
                         )
                         raise UnexpectedCosignData(
-                            message=msg, err_type=type(err).__name__, err=str(err)
+                            message=msg,
+                            err_type=type(err).__name__,
+                            err=str(err),
+                            trust_data_type="dev.cosignproject.cosign/signature",
+                            stderr=stderr,
+                            image=str(image),
+                            trust_root=trust_root["name"],
                         ) from err
                     # remove prefix 'sha256'
                     digests.append(digest.removeprefix("sha256:"))
@@ -92,6 +125,8 @@ class CosignValidator(ValidatorInterface):
                 message=msg,
                 trust_data_type="dev.cosignproject.cosign/signature",
                 stderr=stderr,
+                image=str(image),
+                trust_root=trust_root["name"],
             )
         elif "Error: no matching signatures:\n\nmain.go:" in stderr:
             msg = 'No trust data for image "{image}".'
@@ -100,6 +135,7 @@ class CosignValidator(ValidatorInterface):
                 trust_data_type="dev.cosignproject.cosign/signature",
                 stderr=stderr,
                 image=str(image),
+                trust_root=trust_root["name"],
             )
         else:
             msg = 'Unexpected Cosign exception for image "{image}": {stderr}.'
@@ -108,13 +144,20 @@ class CosignValidator(ValidatorInterface):
                 trust_data_type="dev.cosignproject.cosign/signature",
                 stderr=stderr,
                 image=str(image),
+                trust_root=trust_root["name"],
             )
         if not digests:
             msg = (
                 "Could not extract any digest from data received by Cosign "
                 "despite successful image verification."
             )
-            raise UnexpectedCosignData(message=msg)
+            raise UnexpectedCosignData(
+                message=msg,
+                trust_data_type="dev.cosignproject.cosign/signature",
+                stderr=stderr,
+                image=str(image),
+                trust_root=trust_root["name"],
+            )
         return digests
 
     def __cosign_callback(self, image: Image, key_args: list):
@@ -156,6 +199,68 @@ class CosignValidator(ValidatorInterface):
         ):
             env["SSL_CERT_FILE"] = f"/app/certs/cosign/{self.name}.crt"
         return env
+
+    @staticmethod
+    def __apply_policy(roots: dict, threshold: int, required: list):
+        """
+        TODO: applies the validation policy
+
+        TODO: Raises Exception if not compliant
+        """
+
+        # verify threshold
+        signed_digests = [
+            k["digests"] for i, k in roots.items() if k["digests"] is not None
+        ]
+        # check that same digest present 'threshold' times
+        if not len(set(signed_digests)) == 1 or not len(signed_digests) >= threshold:
+            if len(roots) == 1:
+                raise list(roots.values()).pop()["error"]
+            else:
+                errs = "\n".join(
+                    [
+                        f"* trust root '{e['name']}': {e['error'].message}"
+                        for e in roots.values()
+                        if "error" in e.keys()
+                    ]
+                )
+                msg = "Image not compliant with validation policy (threshold of '{threshold}' not reached). The following errors occurred (please check the logs for more information):\n{errors}"
+                raise ValidationError(
+                    message=msg,
+                    trust_data_type="dev.cosignproject.cosign/signature",
+                    threshold=str(threshold),
+                    required=required,
+                    errors=errs,
+                )
+        else:
+            digest = set(signed_digests).pop()
+
+        # verify required trust roots
+        missing_trust_roots = []
+        for trust_root in required:
+            if not roots[trust_root]["digests"] == digest:
+                missing_trust_roots.append(trust_root)
+
+        if missing_trust_roots:
+            errs = "\n".join(
+                [
+                    f"* trust root '{e['name']}': {e['error'].message}"
+                    for e in roots.values()
+                    if e["name"] in missing_trust_roots
+                ]
+            )
+            msg = "Image not compliant with validation policy (missing signatures for required trust roots: {missing}). The following errors occurred (please check the logs for more information):\n{errors}"
+
+            raise ValidationError(
+                message=msg,
+                trust_data_type="dev.cosignproject.cosign/signature",
+                threshold=str(threshold),
+                required=required,
+                missing=", ".join(missing_trust_roots),
+                errors=errs,
+            )
+
+        return digest
 
     @property
     def healthy(self):
