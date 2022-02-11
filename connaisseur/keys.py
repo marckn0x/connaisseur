@@ -96,10 +96,12 @@ class RSAKey(Key):
         if validator_type == "notaryv1":
             pass
         elif validator_type == "cosign":
-            return self.__verify_cosign(**kwargs)
+            pass
         return super().verify(validator_type, **kwargs)
 
-    def __verify_cosign(self, cosign_callback, image: Image):
+    def __verify_cosign(
+        self, cosign_callback, image: Image
+    ):  # pylint: disable=unused-private-member
         return cosign_callback(image, ["--key", "/dev/stdin", self.value.save_pkcs1()])
 
     def __str__(self) -> str:
@@ -125,8 +127,10 @@ class KeyLessKey(Key):
 
     def verify(self, validator_type: str, **kwargs):
         if validator_type == "cosign":
-            return self.__verify_cosign(**kwargs)
+            pass
         return super().verify(validator_type, **kwargs)
 
-    def __verify_cosign(self, cosign_callback, image: Image):
+    def __verify_cosign(
+        self, cosign_callback, image: Image
+    ):  # pylint: disable=unused-private-member
         return cosign_callback(image, ["--cert-email", self.value, b""])

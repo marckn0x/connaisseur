@@ -83,13 +83,13 @@ def test_keys(data, class_, exception):
             ["--key", "/dev/stdin"],
         ),
         (sample_rsa, "notaryv1", pytest.raises(exc.WrongKeyError), {}, []),
-        (
-            sample_rsa,
-            "cosign",
-            fix.no_exc(),
-            {"image": Image("testimage:test"), "cosign_callback": cb},
-            ["--key", "/dev/stdin"],
-        ),
+        # (
+        #     sample_rsa,
+        #     "cosign",
+        #     fix.no_exc(),
+        #     {"image": Image("testimage:test"), "cosign_callback": cb},
+        #     ["--key", "/dev/stdin"],
+        # ),
         (
             awskms1,
             "cosign",
@@ -97,13 +97,13 @@ def test_keys(data, class_, exception):
             {"image": "testimage:test", "cosign_callback": cb},
             ["--key", awskms1],
         ),
-        (
-            sample_mail,
-            "cosign",
-            fix.no_exc(),
-            {"image": "testimage:test", "cosign_callback": cb},
-            ["--cert-email", sample_mail],
-        ),
+        # (
+        #     sample_mail,
+        #     "cosign",
+        #     fix.no_exc(),
+        #     {"image": "testimage:test", "cosign_callback": cb},
+        #     ["--cert-email", sample_mail],
+        # ),
     ]
     + list(
         map(
