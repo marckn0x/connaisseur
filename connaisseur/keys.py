@@ -15,6 +15,10 @@ KEYLESS_REGEX = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$"
 
 
 class Key:
+    """
+    Abstract Key class, containing the public key used for verifying the image signatures.
+    """
+
     value: str
 
     def __new__(cls, data: str):
@@ -27,6 +31,7 @@ class Key:
 
     @staticmethod
     def __get_key_type_cls(data: str):
+        # key gets automatically identified
         if re.match(KEYLESS_REGEX, data):
             return KeyLessKey
         elif re.match(KMS_REGEX, data):

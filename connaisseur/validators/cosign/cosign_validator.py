@@ -118,6 +118,11 @@ class CosignValidator(ValidatorInterface):
         return digests
 
     def __cosign_callback(self, image: Image, key_args: list):
+        """
+        Callback function that is passed on to any `key.verify()` that is using a cosign
+        validator. Invokes the actual cosign command with different arguments, depending
+        on specific key at hand.
+        """
         option_kword, inline_key, key = key_args
         cmd = [
             "/app/cosign/cosign",
@@ -148,6 +153,10 @@ class CosignValidator(ValidatorInterface):
         return process.returncode, stdout.decode("utf-8"), stderr.decode("utf-8")
 
     def __get_envs(self):
+        """
+        Sets up environment variables used by cosign for potential authentication or TLS
+        verification against private registries.
+        """
         env = os.environ.copy()
         # Extend the OS env vars only for passing to the subprocess below
         env["DOCKER_CONFIG"] = f"/app/connaisseur-config/{self.name}/.docker/"
