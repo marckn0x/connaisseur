@@ -129,7 +129,7 @@ class CosignValidator(ValidatorInterface):
             str(image),
         ]
 
-        with subprocess.Popen(
+        with subprocess.Popen(  # nosec
             cmd,
             env=self.__get_envs(),
             stdin=subprocess.PIPE,
