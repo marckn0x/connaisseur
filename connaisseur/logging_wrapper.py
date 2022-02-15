@@ -11,7 +11,10 @@ class ConnaisseurLoggingWrapper:
         self.logger = logging.getLogger(
             "connaisseurRequestLogger"
         )  # has no handler and hence propagates logs to root logger
-        self.logger.setLevel(log_level)
+        try:
+            self.logger.setLevel(log_level)
+        except ValueError:
+            self.logger.setLevel("INFO")
         self.app = app
 
     # mimic
